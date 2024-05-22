@@ -188,7 +188,7 @@ void loop() {
     int right = digitalRead(sensorRight);
     int back = digitalRead(sensorBack);
 
-    // Update the maze with sensor data
+    // Update the maze with sensor  data
     String mazeJson = "{\"matrix\": [";
     mazeJson += "[\"*\",\"*\", \"*\", \"*\", \"*\", \"*\", \"*\", \"*\"],";
     mazeJson += "[\"*\",\" \", \" \", \" \", \" \", \" \", \" \", \"*\"],";
