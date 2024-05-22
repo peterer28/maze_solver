@@ -10,24 +10,30 @@ const int motorLeftForward = 5;
 const int motorLeftBackward = 18;
 const int motorRightForward = 19;
 const int motorRightBackward = 21;
-const int encoderLeft = 34;
-const int encoderRight = 35;
 const int sensorFront = 32;
 const int sensorLeft = 33;
 const int sensorRight = 25;
 const int sensorBack = 26;
 
-volatile int leftEncoderCount = 0;
-volatile int rightEncoderCount = 0;
-int moveSteps = 100; // Adjust as needed for one grid cell
-int pwmDutyCycle = 128; // Adjust as needed for motor speed (0-255)
+volatile int leftStepCount = 0;
+volatile int rightStepCount = 0;
+const int stepsPerRotation = 12;  // Number of teeth on the wheel
+const int stepsPerGridCell = 100;  // Adjust this value as needed for one grid cell movement
+const int pwmDutyCycle = 128;  // Adjust as needed for motor speed (0-255)
 
-void IRAM_ATTR onLeftEncoder() {
-    leftEncoderCount++;
+enum Direction { UP, DOWN, LEFT, RIGHT };
+Direction currentDirection = UP;  // Starting direction
+
+int currentPosition[2] = {6, 2};  // Starting position
+const int goalPosition[2] = {4, 3};
+
+// Interrupt Service Routine (ISR) for KLR-512 sensors
+void IRAM_ATTR onLeftStep() {
+    leftStepCount++;
 }
 
-void IRAM_ATTR onRightEncoder() {
-    rightEncoderCount++;
+void IRAM_ATTR onRightStep() {
+    rightStepCount++;
 }
 
 void setup() {
@@ -43,59 +49,97 @@ void setup() {
     pinMode(motorLeftBackward, OUTPUT);
     pinMode(motorRightForward, OUTPUT);
     pinMode(motorRightBackward, OUTPUT);
-    pinMode(encoderLeft, INPUT_PULLUP);
-    pinMode(encoderRight, INPUT_PULLUP);
     pinMode(sensorFront, INPUT);
     pinMode(sensorLeft, INPUT);
     pinMode(sensorRight, INPUT);
     pinMode(sensorBack, INPUT);
 
-    attachInterrupt(digitalPinToInterrupt(encoderLeft), onLeftEncoder, RISING);
-    attachInterrupt(digitalPinToInterrupt(encoderRight), onRightEncoder, RISING);
+    attachInterrupt(digitalPinToInterrupt(sensorLeft), onLeftStep, RISING);
+    attachInterrupt(digitalPinToInterrupt(sensorRight), onRightStep, RISING);
 }
 
 void moveForward() {
-    leftEncoderCount = 0;
-    rightEncoderCount = 0;
-    while (leftEncoderCount < moveSteps && rightEncoderCount < moveSteps) {
+    leftStepCount = 0;
+    rightStepCount = 0;
+    while (leftStepCount < stepsPerGridCell && rightStepCount < stepsPerGridCell) {
         analogWrite(motorLeftForward, pwmDutyCycle);
         analogWrite(motorRightForward, pwmDutyCycle);
     }
     analogWrite(motorLeftForward, 0);
     analogWrite(motorRightForward, 0);
+    updatePosition();
 }
 
 void moveBackward() {
-    leftEncoderCount = 0;
-    rightEncoderCount = 0;
-    while (leftEncoderCount < moveSteps && rightEncoderCount < moveSteps) {
+    leftStepCount = 0;
+    rightStepCount = 0;
+    while (leftStepCount < stepsPerGridCell && rightStepCount < stepsPerGridCell) {
         analogWrite(motorLeftBackward, pwmDutyCycle);
         analogWrite(motorRightBackward, pwmDutyCycle);
     }
     analogWrite(motorLeftBackward, 0);
     analogWrite(motorRightBackward, 0);
+    updatePosition(false);
 }
 
 void turnLeft() {
-    leftEncoderCount = 0;
-    rightEncoderCount = 0;
-    while (leftEncoderCount < moveSteps / 2 && rightEncoderCount < moveSteps / 2) {
+    leftStepCount = 0;
+    rightStepCount = 0;
+    while (leftStepCount < stepsPerRotation / 2 && rightStepCount < stepsPerRotation / 2) {
         analogWrite(motorLeftBackward, pwmDutyCycle);
         analogWrite(motorRightForward, pwmDutyCycle);
     }
     analogWrite(motorLeftBackward, 0);
     analogWrite(motorRightForward, 0);
+    updateDirection(false);
 }
 
 void turnRight() {
-    leftEncoderCount = 0;
-    rightEncoderCount = 0;
-    while (leftEncoderCount < moveSteps / 2 && rightEncoderCount < moveSteps / 2) {
+    leftStepCount = 0;
+    rightStepCount = 0;
+    while (leftStepCount < stepsPerRotation / 2 && rightStepCount < stepsPerRotation / 2) {
         analogWrite(motorLeftForward, pwmDutyCycle);
         analogWrite(motorRightBackward, pwmDutyCycle);
     }
     analogWrite(motorLeftForward, 0);
     analogWrite(motorRightBackward, 0);
+    updateDirection(true);
+}
+
+void updatePosition(bool forward = true) {
+    if (forward) {
+        switch (currentDirection) {
+            case UP:    currentPosition[0]--; break;
+            case DOWN:  currentPosition[0]++; break;
+            case LEFT:  currentPosition[1]--; break;
+            case RIGHT: currentPosition[1]++; break;
+        }
+    } else {
+        switch (currentDirection) {
+            case UP:    currentPosition[0]++; break;
+            case DOWN:  currentPosition[0]--; break;
+            case LEFT:  currentPosition[1]++; break;
+            case RIGHT: currentPosition[1]--; break;
+        }
+    }
+}
+
+void updateDirection(bool turnRight) {
+    if (turnRight) {
+        switch (currentDirection) {
+            case UP:    currentDirection = RIGHT; break;
+            case RIGHT: currentDirection = DOWN; break;
+            case DOWN:  currentDirection = LEFT; break;
+            case LEFT:  currentDirection = UP; break;
+        }
+    } else {
+        switch (currentDirection) {
+            case UP:    currentDirection = LEFT; break;
+            case LEFT:  currentDirection = DOWN; break;
+            case DOWN:  currentDirection = RIGHT; break;
+            case RIGHT: currentDirection = UP; break;
+        }
+    }
 }
 
 void sendMazeToServer(String mazeJson) {
@@ -146,18 +190,21 @@ void loop() {
 
     // Update the maze with sensor data
     String mazeJson = "{\"matrix\": [";
-    mazeJson += "[\" \", \" \", \" \", \" \", \" \"],";
-    mazeJson += "[\" \", \"*\", \"*\", \"*\", \" \"],";
-    mazeJson += "[\" \", \"*\", \"p\", \"*\", \" \"],";
-    mazeJson += "[\" \", \"*\", \"*\", \"*\", \" \"],";
-    mazeJson += "[\"g\", ";
+    mazeJson += "[\"*\",\"*\", \"*\", \"*\", \"*\", \"*\", \"*\", \"*\"],";
+    mazeJson += "[\"*\",\" \", \" \", \" \", \" \", \" \", \" \", \"*\"],";
+    mazeJson += "[\"*\",\" \", \" \", \" \", \" \", \" \", \" \", \"*\"],";
+    mazeJson += "[\"*\",\" \", \" \", \" \", \" \", \" \", \" \", \"*\"],";
+    mazeJson += "[\"*\",\" \", \" \", \"p\", \" \", \" \", \" \", \"*\"],";
+    mazeJson += "[\"*\",\" \", \" \", \" \", \" \", \" \", \" \", \"*\"],";
+    mazeJson += "[\"*\",\"g\", ";
     mazeJson += left ? "\"*\"" : "\" \"";
     mazeJson += ", ";
     mazeJson += front ? "\"*\"" : "\" \"";
     mazeJson += ", ";
     mazeJson += right ? "\"*\"" : "\" \"";
-    mazeJson += ", \" \", \" \"]";
-    mazeJson += "], \"start\": [4, 0], \"goal\": [2, 2]}";
+    mazeJson += ", \" \", \"*\"],";
+    mazeJson += "[\"*\",\"*\", \"*\", \"*\", \"*\", \"*\", \"*\", \"*\"]";
+    mazeJson += "], \"current\": [" + String(currentPosition[0]) + ", " + String(currentPosition[1]) + "], \"goal\": [4, 3]}";
 
     // Send updated maze to server
     sendMazeToServer(mazeJson);
@@ -165,5 +212,3 @@ void loop() {
     // Wait before the next iteration
     delay(1000);
 }
-
-
